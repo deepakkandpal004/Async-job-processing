@@ -1,0 +1,37 @@
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+enum JobStatus {
+  QUEUED
+  PROCESSING
+  COMPLETED
+  FAILED
+}
+
+model Job {
+  id          String   @id @default(cuid())
+
+  type        String
+  payload     Json
+
+  status      JobStatus @default(QUEUED)
+
+  attempts    Int      @default(0)
+  maxAttempts Int      @default(3)
+
+  availableAt DateTime @default(now()) @db.Timestamptz(3)
+  leaseUntil  DateTime? @db.Timestamptz(3)
+  workerId    String?
+
+  createdAt   DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt   DateTime @updatedAt @db.Timestamptz(3)
+
+  @@index([status, availableAt])
+  @@index([status, leaseUntil])
+}

@@ -1,0 +1,11 @@
+export const MAX_CONCURRENCY = 3;
+
+export const MAX_ATTEMPTS = 3;
+
+export const BASE_RETRY_DELAY = 1000;
+
+export const LEASE_DURATION = 10_000;
+
+export const HEARTBEAT_INTERVAL = 5_000;
+
+export const WORKER_ID =`worker-${process.pid}`

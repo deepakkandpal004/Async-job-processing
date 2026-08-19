@@ -1,0 +1,2 @@
+-- AlterTable
+ALTER TABLE "Job" ALTER COLUMN "leaseUntil" SET DATA TYPE TIMESTAMPTZ(3);
