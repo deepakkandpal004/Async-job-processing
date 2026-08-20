@@ -5,7 +5,7 @@ const router = Router();
 
 router.post("/", async (req, res) => {
   try {
-    const { type, payload } = req.body;
+    const { type, payload, idempotentKey } = req.body;
 
     if (!type) {
       return res.status(200).json({
@@ -13,14 +13,26 @@ router.post("/", async (req, res) => {
       });
     }
 
+    if (!idempotentKey) {
+      return res.status(400).json({
+        message: "idempotentKey is required",
+      });
+    }
+
     const job = await createJob({
       type,
       payload,
+      idempotentKey,
     });
 
     return res.status(202).json({
-      id: job.id,
-      status: job.status,
+      success: true,
+      message: "Job created successfully",
+      data: {
+        id: job.id,
+        status: job.status,
+        idempotentKey: job.idempotentKey,
+      },
     });
   } catch (error) {
     console.log(error.message);

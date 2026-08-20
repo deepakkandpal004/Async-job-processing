@@ -4,13 +4,38 @@ import { WORKER_ID } from "./job.constants";
 export async function createJob(
   type: string,
   payload: any,
+  idempotentKey: string,
 ) {
-  return prisma.job.create({
-    data: {
-      type,
-      payload,
-    },
+  const existing = await prisma.job.findUnique({
+    where: { idempotentKey },
   });
+  if (existing) {
+    return existing;
+  }
+
+  try {
+    return await prisma.job.create({
+      data: {
+        type,
+        payload,
+        idempotentKey,
+      },
+    });
+  } catch (error: unknown) {
+    if (
+      typeof error === "object" &&
+      error !== null &&
+      (error as { code?: string }).code === "P2002"
+    ) {
+      const existingAfterRace = await prisma.job.findUnique({
+        where: { idempotentKey },
+      });
+      if (existingAfterRace) {
+        return existingAfterRace;
+      }
+    }
+    throw error;
+  }
 }
 
 export async function claimNextJob() {
@@ -53,5 +78,20 @@ export async function claimNextJob() {
         id: jobs[0].id,
       },
     });
+  });
+}
+
+export async function completeJob(jobId: string) {
+  return await prisma.job.updateMany({
+    where: {
+      id: jobId,
+      status: "PROCESSING",
+      workerId: WORKER_ID,
+    },
+    data: {
+      status: "COMPLETED",
+      workerId: null,
+      leaseUntil: null,
+    },
   });
 }

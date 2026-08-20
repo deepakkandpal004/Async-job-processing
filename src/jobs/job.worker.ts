@@ -1,8 +1,9 @@
 import { prisma } from "../config/prisma";
-import { BASE_RETRY_DELAY, MAX_CONCURRENCY } from "./job.constants";
+import { executeJobEffect } from "./job-effect.service";
+import { BASE_RETRY_DELAY, MAX_CONCURRENCY, WORKER_ID } from "./job.constants";
 import { startHeartbeat } from "./job.heartbeat";
 import { startRecovery } from "./job.recovery";
-import { claimNextJob } from "./job.repository";
+import { claimNextJob, completeJob } from "./job.repository";
 
 let activeJobs = 0;
 
@@ -29,28 +30,29 @@ async function processJob(
       `Active Jobs: ${activeJobs}`,
   );
 
-  const stopHeartbeat = startHeartbeat(job.id);
+  // const stopHeartbeat = startHeartbeat(job.id);
   try {
-    await sleep(30000);
+    await sleep(15000);
 
-    await prisma.job.update({
-      where: {
-        id: job.id,
-      },
-      data: {
-        status: "COMPLETED",
-        leaseUntil: null,
-        workerId: null,
-      },
-    });
-    console.log(
-      `[${new Date().toLocaleTimeString("en-IN", { timeZone: "Asia/Kolkata" })}] ` + `Completed Job ${job.id}`,
+    const effectResult = await executeJobEffect(
+      job.idempotentKey,
+      job.id,
+      job.type,
     );
+
+    if (process.env.CRASH_AFTER_EFFECT === "true") {
+      console.log(`[${new Date().toLocaleTimeString("en-IN", { timeZone: "Asia/Kolkata" })}] ` + `💥Simulating work Crash after side effect | Job: ${job.id}`);
+      process.exit(1);
+    }
+
+    const result = await completeJob(job.id);
+
+    if (result.count === 0) {
+      throw new Error(`Job ${job.id} is no longer owned by worker ${WORKER_ID}`);
+    }
+    console.log(`[${new Date().toLocaleTimeString("en-IN", { timeZone: "Asia/Kolkata" })}] ` + `Completed Job ${job.id}`);
   } catch (error) {
-    console.log(
-      `[${new Date().toLocaleTimeString("en-IN", { timeZone: "Asia/Kolkata" })}] ` +
-        `Job ${job.id} failed on attempt ${attempt}`,
-    );
+    console.log(`[${new Date().toLocaleTimeString("en-IN", { timeZone: "Asia/Kolkata" })}] ` + `Job ${job.id} failed on attempt ${attempt}`);
 
     if (attempt < job.maxAttempts) {
       const delay = calculateRetryDelay(attempt);
@@ -88,7 +90,7 @@ async function processJob(
       );
     }
   } finally {
-    stopHeartbeat();
+    // stopHeartbeat();
     activeJobs--;
     console.log(
       `[${new Date().toLocaleTimeString("en-IN", { timeZone: "Asia/Kolkata" })}] ` +

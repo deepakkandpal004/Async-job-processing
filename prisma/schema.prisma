@@ -20,6 +20,7 @@ model Job {
   type        String
   payload     Json
 
+  idempotentKey String @unique
   status      JobStatus @default(QUEUED)
 
   attempts    Int      @default(0)
@@ -34,4 +35,13 @@ model Job {
 
   @@index([status, availableAt])
   @@index([status, leaseUntil])
+}
+
+model JobEffect {
+  idempotentKey String   @id
+  jobId         String
+  type          String
+  createdAt     DateTime @default(now()) @db.Timestamptz(3)
+
+  @@index([jobId])
 }
