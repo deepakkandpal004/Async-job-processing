@@ -21,6 +21,7 @@ export async function recoverStaleJobs() {
     LIMIT 10
     `;
 
+    let recoverCount = 0;
     for (const job of staleJobs) {
       console.log(
         `[${new Date().toLocaleTimeString("en-IN", { timeZone: "Asia/Kolkata" })}] ` +
@@ -29,28 +30,35 @@ export async function recoverStaleJobs() {
           ` | Lease Until: ${job.leaseUntil?.toLocaleTimeString("en-IN", { timeZone: "Asia/Kolkata" })}`,
       );
 
-      await tx.job.update({
-        where: {
-          id: job.id,
-        },
-        data: {
-          status: "QUEUED",
-          workerId: null,
-          leaseUntil: null,
-          availableAt: new Date(),
-        },
-      });
+      const result = await tx.$executeRaw`
+        UPDATE "Job"
+        SET "status" = 'QUEUED', "workerId" = null, "leaseUntil" = null
+        WHERE "id" = ${job.id} AND "status" = 'PROCESSING'
+        AND "leaseUntil" IS NOT NULL
+        AND "leaseUntil" < NOW()
+      `;
+
+      if (result !== 1) {
+        continue;
+      }
+      recoverCount++;
     }
-    return staleJobs.length;
+    return recoverCount;
   });
 }
 
 export function startRecovery() {
-  setInterval(async () => {
+  const interval = setInterval(async () => {
     try {
       await recoverStaleJobs();
     } catch (error) {
       console.error("Job recovery failed: ", error);
     }
   }, RECOVERY_INTERVAL);
+
+  return () => {
+    clearInterval(interval);
+    console.log(`[${new Date().toLocaleTimeString("en-IN", { timeZone: "Asia/Kolkata" })}] ` +
+      `Recovery stopped`)
+  }
 }

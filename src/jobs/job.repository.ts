@@ -64,6 +64,9 @@ export async function claimNextJob() {
           increment: 1,
         },
         workerId: WORKER_ID,
+        fencingToken: {
+          increment: 1,
+        },
       },
     });
 
@@ -81,15 +84,49 @@ export async function claimNextJob() {
   });
 }
 
-export async function completeJob(jobId: string) {
+export async function completeJob(jobId: string, fencingToken: number) {
   return await prisma.job.updateMany({
     where: {
       id: jobId,
       status: "PROCESSING",
       workerId: WORKER_ID,
+      fencingToken: fencingToken,
     },
     data: {
       status: "COMPLETED",
+      workerId: null,
+      leaseUntil: null,
+    },
+  });
+}
+
+export async function retryJob(jobId: string, fencingToken: number, availableAt: Date) {
+  return await prisma.job.updateMany({
+    where: {
+      id: jobId,
+      status: "PROCESSING",
+      workerId: WORKER_ID,
+      fencingToken: fencingToken,
+    },
+    data: {
+      status: "QUEUED",
+      workerId: null,
+      leaseUntil: null,
+      availableAt: availableAt,
+    },
+  });
+}
+
+export async function failJob(jobId: string, fencingToken: number) {
+  return await prisma.job.updateMany({
+    where: {
+      id: jobId,
+      status: "PROCESSING",
+      workerId: WORKER_ID,
+      fencingToken: fencingToken,
+    },
+    data: {
+      status: "FAILED",
       workerId: null,
       leaseUntil: null,
     },

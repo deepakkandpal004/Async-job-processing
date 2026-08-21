@@ -3,9 +3,13 @@ import { executeJobEffect } from "./job-effect.service";
 import { BASE_RETRY_DELAY, MAX_CONCURRENCY, WORKER_ID } from "./job.constants";
 import { startHeartbeat } from "./job.heartbeat";
 import { startRecovery } from "./job.recovery";
-import { claimNextJob, completeJob } from "./job.repository";
+import { claimNextJob, completeJob, failJob, retryJob } from "./job.repository";
 
 let activeJobs = 0;
+let isShuttingDown = false;
+const ENABLE_HEARTBEAT = process.env.ENABLE_HEARTBEAT !== "false";
+const runningJobs = new Set<Promise<void>>();
+let stopRecovery: () => void;
 
 function calculateRetryDelay(attempt: number): number {
   return BASE_RETRY_DELAY * 2 ** (attempt - 1);
@@ -19,6 +23,7 @@ async function processJob(
   job: NonNullable<Awaited<ReturnType<typeof claimNextJob>>>,
 ) {
   activeJobs++;
+  let ownershipLost = false;
 
   const attempt = job.attempts;
 
@@ -30,67 +35,98 @@ async function processJob(
       `Active Jobs: ${activeJobs}`,
   );
 
-  // const stopHeartbeat = startHeartbeat(job.id);
+  const stopHeartbeat = ENABLE_HEARTBEAT
+    ? startHeartbeat(job.id, job.fencingToken, WORKER_ID, () => {
+        ownershipLost = true;
+      })
+    : () => {};
   try {
-    await sleep(15000);
+    await sleep(10000);
 
-    const effectResult = await executeJobEffect(
-      job.idempotentKey,
-      job.id,
-      job.type,
-    );
+    if (ownershipLost) {
+      console.log(
+        `[${new Date().toLocaleTimeString("en-IN", { timeZone: "Asia/Kolkata" })}] ` +
+          `Stopping Job ${job.id} because worker lost ownership`,
+      );
+      return;
+    }
+
+    await executeJobEffect(job.idempotentKey, job.id, job.type);
 
     if (process.env.CRASH_AFTER_EFFECT === "true") {
-      console.log(`[${new Date().toLocaleTimeString("en-IN", { timeZone: "Asia/Kolkata" })}] ` + `💥Simulating work Crash after side effect | Job: ${job.id}`);
+      console.log(
+        `[${new Date().toLocaleTimeString("en-IN", { timeZone: "Asia/Kolkata" })}]` +
+          `💥 Simulating work Crash after side effect | Job: ${job.id}`,
+      );
       process.exit(1);
     }
 
-    const result = await completeJob(job.id);
+    if (ownershipLost) {
+      console.log(
+        `[${new Date().toLocaleTimeString("en-IN", { timeZone: "Asia/Kolkata" })}] ` +
+          `Stopping Job ${job.id} because worker lost ownership`,
+      );
+      return;
+    }
+
+    const result = await completeJob(job.id, job.fencingToken);
 
     if (result.count === 0) {
-      throw new Error(`Job ${job.id} is no longer owned by worker ${WORKER_ID}`);
+      throw new Error(
+        `Job ${job.id} is no longer owned by worker ${WORKER_ID}`,
+      );
     }
-    console.log(`[${new Date().toLocaleTimeString("en-IN", { timeZone: "Asia/Kolkata" })}] ` + `Completed Job ${job.id}`);
+    console.log(
+      `[${new Date().toLocaleTimeString("en-IN", { timeZone: "Asia/Kolkata" })}] ` +
+        `Completed Job ${job.id}`,
+    );
   } catch (error) {
-    console.log(`[${new Date().toLocaleTimeString("en-IN", { timeZone: "Asia/Kolkata" })}] ` + `Job ${job.id} failed on attempt ${attempt}`);
+    if (ownershipLost) {
+      console.log(
+        `[${new Date().toLocaleTimeString("en-IN", { timeZone: "Asia/Kolkata" })}] ` +
+          `Job ${job.id} ownership lost - skipping retry/failure`,
+      );
+      return;
+    }
+
+    console.log(
+      `[${new Date().toLocaleTimeString("en-IN", { timeZone: "Asia/Kolkata" })}] ` +
+        `Job ${job.id} failed on attempt ${attempt}`,
+    );
 
     if (attempt < job.maxAttempts) {
       const delay = calculateRetryDelay(attempt);
 
       const availableAt = new Date(Date.now() + delay);
-      await prisma.job.update({
-        where: {
-          id: job.id,
-        },
-        data: {
-          status: "QUEUED",
-          availableAt,
-          leaseUntil: null,
-          workerId: null,
-        },
-      });
+      const result = await retryJob(job.id, job.fencingToken, availableAt);
+      if (result.count === 0) {
+        console.log(
+          `[${new Date().toLocaleTimeString("en-IN", { timeZone: "Asia/Kolkata" })}] ` +
+            `Job ${job.id} retry rejected - worker no longer owns job ${WORKER_ID}`,
+        );
+        return;
+      }
+
       console.log(
         `[${new Date().toLocaleTimeString("en-IN", { timeZone: "Asia/Kolkata" })}] ` +
           `Job ${job.id} delayed for ${delay}ms`,
       );
     } else {
-      await prisma.job.update({
-        where: {
-          id: job.id,
-        },
-        data: {
-          status: "FAILED",
-          leaseUntil: null,
-          workerId: null,
-        },
-      });
+      const result = await failJob(job.id, job.fencingToken);
+      if (result.count === 0) {
+        console.log(
+          `[${new Date().toLocaleTimeString("en-IN", { timeZone: "Asia/Kolkata" })}] ` +
+            `Job ${job.id} failure rejected - worker no longer owns job ${WORKER_ID}`,
+        );
+        return;
+      }
       console.log(
         `[${new Date().toLocaleTimeString("en-IN", { timeZone: "Asia/Kolkata" })}] ` +
           `Job ${job.id} permanently failed`,
       );
     }
   } finally {
-    // stopHeartbeat();
+    stopHeartbeat();
     activeJobs--;
     console.log(
       `[${new Date().toLocaleTimeString("en-IN", { timeZone: "Asia/Kolkata" })}] ` +
@@ -100,7 +136,7 @@ async function processJob(
 }
 
 async function workerLoop() {
-  while (true) {
+  while (!isShuttingDown) {
     if (activeJobs >= MAX_CONCURRENCY) {
       await sleep(100);
       continue;
@@ -110,20 +146,65 @@ async function workerLoop() {
       await sleep(100);
       continue;
     }
-    processJob(job).catch((error) => {
-      console.error(`Unexpected error while processing Job ${job.id}:`, error);
-    });
+    const jobPromise = processJob(job);
+    runningJobs.add(jobPromise);
+    jobPromise
+      .catch((error) => {
+        console.error(
+          `Unexpected error while processing Job ${job.id}:`,
+          error,
+        );
+      })
+      .finally(() => {
+        runningJobs.delete(jobPromise);
+      });
   }
+  console.log("Worker stopped accepting new jobs");
 }
+
+async function shutdown(signal: string) {
+  if (isShuttingDown) return;
+  isShuttingDown = true;
+
+  console.log(`[${new Date().toLocaleTimeString("en-IN", { timeZone: "Asia/Kolkata" })}] Received ${signal}. Starting graceful shutdown...`);
+
+  if (!stopRecovery) {
+    stopRecovery();
+    stopRecovery = null;
+  }
+
+  console.log(`worker stopped accepting new jobs`)
+
+  console.log(`Waiting for ${runningJobs.size} active jobs to finish...`);
+
+  await Promise.allSettled(Array.from(runningJobs));
+
+  console.log(`All active jobs have finished.`)
+
+  await prisma.$disconnect();
+
+  console.log("Worker shutdown complete.");
+
+  process.exit(0);
+
+}
+
 export function startWorker() {
+  process.on("SIGINT", () => {
+    shutdown("SIGINT");
+  });
+
+  process.on("SIGTERM", () => {
+    shutdown("SIGTERM");
+  });
   workerLoop().catch((error) => {
     console.log("Worker Crashed:", error);
   });
-  startRecovery();
 
-  console.log(
-    "Node:",
-    new Date().toLocaleTimeString(),
-  );
+  stopRecovery = startRecovery();
+
+  console.log(`Node: ${new Date().toLocaleTimeString("en-IN", { timeZone: "Asia/Kolkata" })}`)
+
   console.log(`worker started with concurrency ${MAX_CONCURRENCY}`);
+
 }

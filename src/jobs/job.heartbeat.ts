@@ -3,7 +3,12 @@ import {
   HEARTBEAT_INTERVAL,
 } from "./job.constants";
 
-export function startHeartbeat(jobId: string) {
+export function startHeartbeat(
+  jobId: string,
+  fencingToken: number,
+  workerId: string,
+  onOwnershipLost: () => void,
+) {
   let stopped = false;
 
   const interval = setInterval(async () => {
@@ -17,18 +22,22 @@ export function startHeartbeat(jobId: string) {
         SET "leaseUntil" = NOW() + INTERVAL '10 seconds'
         WHERE "id" = CAST(${jobId} AS TEXT)
           AND "status" = 'PROCESSING'
+          AND "fencingToken" = ${fencingToken}
       `;
 
       if (result === 1) {
         console.log(
           `[${new Date().toLocaleTimeString("en-IN", { timeZone: "Asia/Kolkata" })}] ` +
-            `Heartbeat renewed Job ${jobId}`,
+            `Heartbeat renewed Job ${jobId} | ` + `Worker: ${workerId} | ` + `Token: ${fencingToken}`,
         );
       } else {
         console.log(
           `[${new Date().toLocaleTimeString("en-IN", { timeZone: "Asia/Kolkata" })}] ` +
-            `Heartbeat could not renew Job ${jobId}`,
+            `Heartbeat lost ownership  | ` + `Job: ${jobId} | ` + `Worker: ${workerId} | ` + `Token: ${fencingToken}`,
         );
+        stopped = true;
+        clearInterval(interval);
+        onOwnershipLost();
       }
     } catch (error) {
       console.error(

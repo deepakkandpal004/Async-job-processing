@@ -6,7 +6,8 @@
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit ",
     "dev": "tsx watch src/server.ts",
-    "worker": "tsx watch src/worker.ts"
+    "worker": "tsx watch src/worker.ts",
+    "worker:run": "tsx src/worker.ts"
   },
   "keywords": [],
   "type": "module",

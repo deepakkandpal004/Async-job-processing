@@ -6,6 +6,6 @@ export const BASE_RETRY_DELAY = 1000;
 
 export const LEASE_DURATION = 10_000;
 
-export const HEARTBEAT_INTERVAL = 5_000;
+export const HEARTBEAT_INTERVAL = 5000;
 
 export const WORKER_ID =`worker-${process.pid}`

@@ -13,12 +13,12 @@ export async function executeJobEffect(
       type,
     );
 
-  console.log(`[${new Date().toLocaleTimeString()}]` + `Side Effect Executed | Job ${jobId}`);
+  console.log(`[${new Date().toLocaleTimeString()}]` + ` Side Effect Executed | Job ${jobId}`);
 
     return { executed: true };
   } catch (error) {
     if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002") {
-      console.log(`[${new Date().toLocaleTimeString()}]` + `Side Effect already executed | Job ${jobId}`);
+      console.log(`[${new Date().toLocaleTimeString()}]` + ` Side Effect already executed | Job ${jobId}`);
 
       return { executed: false };
     }

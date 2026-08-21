@@ -29,6 +29,7 @@ model Job {
   availableAt DateTime @default(now()) @db.Timestamptz(3)
   leaseUntil  DateTime? @db.Timestamptz(3)
   workerId    String?
+  fencingToken Int @default(0)
 
   createdAt   DateTime @default(now()) @db.Timestamptz(3)
   updatedAt   DateTime @updatedAt @db.Timestamptz(3)
