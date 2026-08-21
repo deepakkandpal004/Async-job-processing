@@ -7,7 +7,8 @@
     "test": "echo \"Error: no test specified\" && exit ",
     "dev": "tsx watch src/server.ts",
     "worker": "tsx watch src/worker.ts",
-    "worker:run": "tsx src/worker.ts"
+    "worker:run": "tsx src/worker.ts",
+    "manualretry":"tsx src/test-dlq-retry.ts"
   },
   "keywords": [],
   "type": "module",

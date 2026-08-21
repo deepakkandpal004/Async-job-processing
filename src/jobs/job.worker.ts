@@ -1,18 +1,27 @@
 import { prisma } from "../config/prisma";
 import { executeJobEffect } from "./job-effect.service";
-import { BASE_RETRY_DELAY, MAX_CONCURRENCY, WORKER_ID } from "./job.constants";
+import { BASE_RETRY_DELAY, MAX_CONCURRENCY, MAX_RETRY_DELAY, WORKER_ID } from "./job.constants";
 import { startHeartbeat } from "./job.heartbeat";
 import { startRecovery } from "./job.recovery";
-import { claimNextJob, completeJob, failJob, retryJob } from "./job.repository";
+import { claimNextJob, completeJob, failJob, retryJob, deadLetterJob } from "./job.repository";
+import { RetryableJobError, PermanentJobError } from "./job.errors";
 
 let activeJobs = 0;
 let isShuttingDown = false;
 const ENABLE_HEARTBEAT = process.env.ENABLE_HEARTBEAT !== "false";
 const runningJobs = new Set<Promise<void>>();
-let stopRecovery: () => void;
+let stopRecovery: (() => void) | null = null;
 
 function calculateRetryDelay(attempt: number): number {
-  return BASE_RETRY_DELAY * 2 ** (attempt - 1);
+  const exponentialDelay = BASE_RETRY_DELAY * 2 ** (attempt - 1);
+
+  const cappedDelay = Math.min(exponentialDelay, MAX_RETRY_DELAY);
+  const jitter = Math.random() * cappedDelay * 0.2;
+  return Math.floor(exponentialDelay + jitter);
+}
+
+function isRetryableError(error: unknown): boolean {
+  return error instanceof RetryableJobError;
 }
 
 function sleep(ms: number) {
@@ -89,6 +98,44 @@ async function processJob(
       return;
     }
 
+    if (error instanceof PermanentJobError) {
+      console.log(
+        `[${new Date().toLocaleTimeString("en-IN", {
+          timeZone: "Asia/Kolkata",
+        })}] ` + `Job ${job.id} permanently failed: ${error.message}`,
+      );
+
+      const result = await failJob(job.id, job.fencingToken);
+
+      if (result.count === 0) {
+        console.log(
+          `Job ${job.id} failure rejected - worker no longer owns job ${WORKER_ID}`,
+        );
+        return;
+      }
+      return;
+    }
+
+    if (!isRetryableError(error)) {
+      console.error(
+        `[${new Date().toLocaleTimeString("en-IN", {
+          timeZone: "Asia/Kolkata",
+        })}] ` + `Job ${job.id} encountered an unknown error:`,
+        error,
+      );
+
+      const result = await failJob(job.id, job.fencingToken);
+
+      if (result.count === 0) {
+        console.log(
+          `Job ${job.id} failure rejected - worker no longer owns job ${WORKER_ID}`,
+        );
+        return;
+      }
+
+      return;
+    }
+
     console.log(
       `[${new Date().toLocaleTimeString("en-IN", { timeZone: "Asia/Kolkata" })}] ` +
         `Job ${job.id} failed on attempt ${attempt}`,
@@ -98,6 +145,7 @@ async function processJob(
       const delay = calculateRetryDelay(attempt);
 
       const availableAt = new Date(Date.now() + delay);
+
       const result = await retryJob(job.id, job.fencingToken, availableAt);
       if (result.count === 0) {
         console.log(
@@ -106,23 +154,28 @@ async function processJob(
         );
         return;
       }
-
       console.log(
         `[${new Date().toLocaleTimeString("en-IN", { timeZone: "Asia/Kolkata" })}] ` +
           `Job ${job.id} delayed for ${delay}ms`,
       );
     } else {
-      const result = await failJob(job.id, job.fencingToken);
+      const errorMessage = error instanceof Error ? error.message : "Unknown Error";
+      const result = await deadLetterJob(
+        job.id,
+        job.fencingToken,
+        errorMessage,
+      );
+
       if (result.count === 0) {
         console.log(
           `[${new Date().toLocaleTimeString("en-IN", { timeZone: "Asia/Kolkata" })}] ` +
-            `Job ${job.id} failure rejected - worker no longer owns job ${WORKER_ID}`,
+            `Job ${job.id} could not moved to DLQ -  worker no longer owns job ${WORKER_ID}`,
         );
         return;
       }
       console.log(
         `[${new Date().toLocaleTimeString("en-IN", { timeZone: "Asia/Kolkata" })}] ` +
-          `Job ${job.id} permanently failed`,
+          `Job ${job.id} move to DEAD letter ${attempt} attempts`,
       );
     }
   } finally {
@@ -166,27 +219,28 @@ async function shutdown(signal: string) {
   if (isShuttingDown) return;
   isShuttingDown = true;
 
-  console.log(`[${new Date().toLocaleTimeString("en-IN", { timeZone: "Asia/Kolkata" })}] Received ${signal}. Starting graceful shutdown...`);
+  console.log(
+    `[${new Date().toLocaleTimeString("en-IN", { timeZone: "Asia/Kolkata" })}] Received ${signal}. Starting graceful shutdown...`,
+  );
 
   if (!stopRecovery) {
     stopRecovery();
     stopRecovery = null;
   }
 
-  console.log(`worker stopped accepting new jobs`)
+  console.log(`worker stopped accepting new jobs`);
 
   console.log(`Waiting for ${runningJobs.size} active jobs to finish...`);
 
   await Promise.allSettled(Array.from(runningJobs));
 
-  console.log(`All active jobs have finished.`)
+  console.log(`All active jobs have finished.`);
 
   await prisma.$disconnect();
 
   console.log("Worker shutdown complete.");
 
   process.exit(0);
-
 }
 
 export function startWorker() {
@@ -203,8 +257,9 @@ export function startWorker() {
 
   stopRecovery = startRecovery();
 
-  console.log(`Node: ${new Date().toLocaleTimeString("en-IN", { timeZone: "Asia/Kolkata" })}`)
+  console.log(
+    `Node: ${new Date().toLocaleTimeString("en-IN", { timeZone: "Asia/Kolkata" })}`,
+  );
 
   console.log(`worker started with concurrency ${MAX_CONCURRENCY}`);
-
 }

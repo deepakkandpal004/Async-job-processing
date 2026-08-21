@@ -12,6 +12,7 @@ enum JobStatus {
   PROCESSING
   COMPLETED
   FAILED
+  DEAD
 }
 
 model Job {
@@ -25,6 +26,9 @@ model Job {
 
   attempts    Int      @default(0)
   maxAttempts Int      @default(3)
+
+  lastError   String?
+  deadAt      DateTime? @db.Timestamptz(3)
 
   availableAt DateTime @default(now()) @db.Timestamptz(3)
   leaseUntil  DateTime? @db.Timestamptz(3)

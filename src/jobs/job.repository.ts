@@ -132,3 +132,43 @@ export async function failJob(jobId: string, fencingToken: number) {
     },
   });
 }
+
+export async function deadLetterJob(
+  jobId: string,
+  fencingToken: number,
+  errorMessage: string,
+) {
+  return await prisma.job.updateMany({
+    where: {
+      id: jobId,
+      status: "PROCESSING",
+      workerId: WORKER_ID,
+      fencingToken: fencingToken
+    },
+    data: {
+      status: "DEAD",
+      workerId: null,
+      leaseUntil: null,
+      lastError: errorMessage,
+      deadAt: new Date(),
+    }
+  })
+}
+
+export async function retryDeadJob(jobId: string) {
+  return await prisma.job.updateMany({
+    where: {
+      id: jobId,
+      status: "DEAD",
+    },
+    data: {
+      status: "QUEUED",
+      attempts: 0,
+      availableAt: new Date(),
+      lastError: null,
+      deadAt: null,
+      workerId: null,
+      leaseUntil: null
+    }
+  })
+}
