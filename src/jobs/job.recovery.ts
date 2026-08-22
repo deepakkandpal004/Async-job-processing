@@ -1,3 +1,4 @@
+import { logger } from "../config/logger";
 import { prisma } from "../config/prisma";
 
 const RECOVERY_INTERVAL = 3000;
@@ -23,13 +24,6 @@ export async function recoverStaleJobs() {
 
     let recoverCount = 0;
     for (const job of staleJobs) {
-      console.log(
-        `[${new Date().toLocaleTimeString("en-IN", { timeZone: "Asia/Kolkata" })}] ` +
-          `Recovering stale Job ${job.id} | ` +
-          `Previous Worker: ${job.workerId}` +
-          ` | Lease Until: ${job.leaseUntil?.toLocaleTimeString("en-IN", { timeZone: "Asia/Kolkata" })}`,
-      );
-
       const result = await tx.$executeRaw`
         UPDATE "Job"
         SET "status" = 'QUEUED', "workerId" = null, "leaseUntil" = null
@@ -39,8 +33,27 @@ export async function recoverStaleJobs() {
       `;
 
       if (result !== 1) {
+        logger.warn(
+          {
+            event: "Job Recovery Skipped",
+            jobId: job.id,
+            previousWorkerId: job.workerId,
+            leaseUntil: job.leaseUntil,
+          },
+          `Stale Job recovery skipped`,
+        );
+
         continue;
       }
+      logger.warn(
+        {
+          event: "Job Recovery Success",
+          jobId: job.id,
+          previousWorkerId: job.workerId,
+          leaseUntil: job.leaseUntil,
+        },
+        `Stale Job Recovered`,
+      );
       recoverCount++;
     }
     return recoverCount;
@@ -52,13 +65,23 @@ export function startRecovery() {
     try {
       await recoverStaleJobs();
     } catch (error) {
-      console.error("Job recovery failed: ", error);
+      logger.error(
+        {
+          event: "Job Recovery Failed",
+          error: error instanceof Error ? error.message : String(error),
+        },
+        "Job Recovery failed",
+      );
     }
   }, RECOVERY_INTERVAL);
 
   return () => {
     clearInterval(interval);
-    console.log(`[${new Date().toLocaleTimeString("en-IN", { timeZone: "Asia/Kolkata" })}] ` +
-      `Recovery stopped`)
-  }
+    logger.info(
+      {
+        event: "Job Recovery Stopped",
+      },
+      "Recovery stopped",
+    );
+  };
 }

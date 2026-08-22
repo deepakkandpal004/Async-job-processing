@@ -1,7 +1,6 @@
+import { logger } from "../config/logger";
 import { prisma } from "../config/prisma";
-import {
-  HEARTBEAT_INTERVAL,
-} from "./job.constants";
+import { HEARTBEAT_INTERVAL } from "./job.constants";
 
 export function startHeartbeat(
   jobId: string,
@@ -26,23 +25,39 @@ export function startHeartbeat(
       `;
 
       if (result === 1) {
-        console.log(
-          `[${new Date().toLocaleTimeString("en-IN", { timeZone: "Asia/Kolkata" })}] ` +
-            `Heartbeat renewed Job ${jobId} | ` + `Worker: ${workerId} | ` + `Token: ${fencingToken}`,
+        logger.info(
+          {
+            event: "Heartbeat Renewed",
+            jobId,
+            workerId,
+            fencingToken,
+          },
+          "Heartbeat Renewed",
         );
       } else {
-        console.log(
-          `[${new Date().toLocaleTimeString("en-IN", { timeZone: "Asia/Kolkata" })}] ` +
-            `Heartbeat lost ownership  | ` + `Job: ${jobId} | ` + `Worker: ${workerId} | ` + `Token: ${fencingToken}`,
+        logger.warn(
+          {
+            event: "heartbeat OwnerShip Lost",
+            jobId,
+            workerId,
+            fencingToken,
+          },
+          "Heartbeat lost ownership",
         );
         stopped = true;
         clearInterval(interval);
         onOwnershipLost();
       }
     } catch (error) {
-      console.error(
-        `Heartbeat failed for Job ${jobId}:`,
-        error,
+      logger.error(
+        {
+          event: "Heartbeat Error",
+          jobId,
+          workerId,
+          fencingToken,
+          error: error instanceof Error ? error.message : String(error),
+        },
+        "Heartbeat Failed",
       );
     }
   }, HEARTBEAT_INTERVAL);
@@ -51,8 +66,14 @@ export function startHeartbeat(
     stopped = true;
     clearInterval(interval);
 
-    console.log(
-      `Heartbeat stopped for Job ${jobId}`,
+    logger.info(
+      {
+        event: "Heartbeat Stopped",
+        jobId,
+        workerId,
+        fencingToken,
+      },
+      "Heartbeat Stopped",
     );
   };
 }

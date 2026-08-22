@@ -1,14 +1,37 @@
 import { prisma } from "../config/prisma";
 import { executeJobEffect } from "./job-effect.service";
-import { BASE_RETRY_DELAY, MAX_CONCURRENCY, MAX_RETRY_DELAY, WORKER_ID } from "./job.constants";
+import {
+  BASE_RETRY_DELAY,
+  MAX_CONCURRENCY,
+  MAX_RETRY_DELAY,
+  WORKER_ID,
+} from "./job.constants";
 import { startHeartbeat } from "./job.heartbeat";
 import { startRecovery } from "./job.recovery";
-import { claimNextJob, completeJob, failJob, retryJob, deadLetterJob } from "./job.repository";
+import {
+  claimNextJob,
+  completeJob,
+  failJob,
+  retryJob,
+  deadLetterJob,
+} from "./job.repository";
 import { RetryableJobError, PermanentJobError } from "./job.errors";
+import { logger } from "../config/logger";
+import {
+  jobsProcessed,
+  jobsSuccessful,
+  jobsFailed,
+  jobsRetried,
+  jobsDead,
+  jobDuration,
+} from "./job.metrics";
+
 
 let activeJobs = 0;
 let isShuttingDown = false;
+
 const ENABLE_HEARTBEAT = process.env.ENABLE_HEARTBEAT !== "false";
+
 const runningJobs = new Set<Promise<void>>();
 let stopRecovery: (() => void) | null = null;
 
@@ -16,12 +39,18 @@ function calculateRetryDelay(attempt: number): number {
   const exponentialDelay = BASE_RETRY_DELAY * 2 ** (attempt - 1);
 
   const cappedDelay = Math.min(exponentialDelay, MAX_RETRY_DELAY);
+
   const jitter = Math.random() * cappedDelay * 0.2;
-  return Math.floor(exponentialDelay + jitter);
+
+  return Math.floor(Math.min(cappedDelay + jitter, MAX_RETRY_DELAY));
 }
 
 function isRetryableError(error: unknown): boolean {
   return error instanceof RetryableJobError;
+}
+
+function isPermanentError(error: unknown): boolean {
+  return error instanceof PermanentJobError;
 }
 
 function sleep(ms: number) {
@@ -32,16 +61,26 @@ async function processJob(
   job: NonNullable<Awaited<ReturnType<typeof claimNextJob>>>,
 ) {
   activeJobs++;
+
+  jobsProcessed.inc();
+
   let ownershipLost = false;
 
   const attempt = job.attempts;
 
-  console.log(
-    `[${new Date().toLocaleTimeString("en-IN", { timeZone: "Asia/Kolkata" })}] ` +
-      `Processing Job ${job.id} | ` +
-      `Attempt: ${attempt} | ` +
-      `Lease Until: ${job.leaseUntil?.toLocaleTimeString("en-IN", { timeZone: "Asia/Kolkata" })} | ` +
-      `Active Jobs: ${activeJobs}`,
+  const startedAt = new Date();
+
+  logger.info(
+    {
+      event: "Job Processing",
+      jobId: job.id,
+      workerId: WORKER_ID,
+      attempt: attempt,
+      leaseUntil: job.leaseUntil,
+      fencingToken: job.fencingToken,
+      activeJobs: activeJobs,
+    },
+    "Processing Job",
   );
 
   const stopHeartbeat = ENABLE_HEARTBEAT
@@ -49,13 +88,20 @@ async function processJob(
         ownershipLost = true;
       })
     : () => {};
+
   try {
     await sleep(10000);
 
     if (ownershipLost) {
-      console.log(
-        `[${new Date().toLocaleTimeString("en-IN", { timeZone: "Asia/Kolkata" })}] ` +
-          `Stopping Job ${job.id} because worker lost ownership`,
+      logger.warn(
+        {
+          event: "Job OwnerShip Lost",
+          jobId: job.id,
+          workerId: WORKER_ID,
+          fencingToken: job.fencingToken,
+          attempt: attempt,
+        },
+        "Stopping Job Because ownerShip is lost",
       );
       return;
     }
@@ -63,17 +109,27 @@ async function processJob(
     await executeJobEffect(job.idempotentKey, job.id, job.type);
 
     if (process.env.CRASH_AFTER_EFFECT === "true") {
-      console.log(
-        `[${new Date().toLocaleTimeString("en-IN", { timeZone: "Asia/Kolkata" })}]` +
-          `💥 Simulating work Crash after side effect | Job: ${job.id}`,
+      logger.error(
+        {
+          event: "Working Crash Simulation",
+          jobId: job.id,
+          workerId: WORKER_ID,
+        },
+        "Simulating worker crash after side effect",
       );
       process.exit(1);
     }
 
     if (ownershipLost) {
-      console.log(
-        `[${new Date().toLocaleTimeString("en-IN", { timeZone: "Asia/Kolkata" })}] ` +
-          `Stopping Job ${job.id} because worker lost ownership`,
+      logger.warn(
+        {
+          event: "Job OwnerShip Lost",
+          jobId: job.id,
+          workerId: WORKER_ID,
+          fencingToken: job.fencingToken,
+          attempt,
+        },
+        "Stopping job because worker lost ownership",
       );
       return;
     }
@@ -85,61 +141,107 @@ async function processJob(
         `Job ${job.id} is no longer owned by worker ${WORKER_ID}`,
       );
     }
-    console.log(
-      `[${new Date().toLocaleTimeString("en-IN", { timeZone: "Asia/Kolkata" })}] ` +
-        `Completed Job ${job.id}`,
+
+    jobsSuccessful.inc();
+    logger.info(
+      {
+        event: "Job Completed",
+        jobId: job.id,
+        workerId: WORKER_ID,
+        fencingToken: job.fencingToken,
+        attempt: attempt,
+      },
+      "Job Completed",
     );
   } catch (error) {
     if (ownershipLost) {
-      console.log(
-        `[${new Date().toLocaleTimeString("en-IN", { timeZone: "Asia/Kolkata" })}] ` +
-          `Job ${job.id} ownership lost - skipping retry/failure`,
+      logger.warn(
+        {
+          event: "Job OwnerShip Lost",
+          jobId: job.id,
+          workerId: WORKER_ID,
+          fencingToken: job.fencingToken,
+          attempt,
+        },
+        "Stopping job because worker lost ownership",
       );
       return;
     }
 
-    if (error instanceof PermanentJobError) {
-      console.log(
-        `[${new Date().toLocaleTimeString("en-IN", {
-          timeZone: "Asia/Kolkata",
-        })}] ` + `Job ${job.id} permanently failed: ${error.message}`,
-      );
+    const errorMessage =
+      error instanceof Error ? error.message : "Unknown Error";
 
+    logger.error(
+      {
+        event: "Job Failed",
+        jobId: job.id,
+        workerId: WORKER_ID,
+        fencingToken: job.fencingToken,
+        attempt,
+        error: errorMessage,
+      },
+      "Job Processing Failed",
+    );
+
+    if (isPermanentError(error)) {
       const result = await failJob(job.id, job.fencingToken);
 
       if (result.count === 0) {
-        console.log(
-          `Job ${job.id} failure rejected - worker no longer owns job ${WORKER_ID}`,
+        logger.warn(
+          {
+            event: "Job Failure Rejected",
+            jobId: job.id,
+            workerId: WORKER_ID,
+            fencingToken: job.fencingToken,
+          },
+          "Permanent Job Failure Rejected - worker no longer owns job",
         );
         return;
       }
+      jobsFailed.inc();
+      logger.error(
+        {
+          event: "Job Failed Permanently",
+          jobId: job.id,
+          workerId: WORKER_ID,
+          fencingToken: job.fencingToken,
+          attempt,
+          error: errorMessage,
+        },
+        "Job Permanently Failed",
+      );
       return;
     }
 
     if (!isRetryableError(error)) {
-      console.error(
-        `[${new Date().toLocaleTimeString("en-IN", {
-          timeZone: "Asia/Kolkata",
-        })}] ` + `Job ${job.id} encountered an unknown error:`,
-        error,
-      );
-
       const result = await failJob(job.id, job.fencingToken);
 
       if (result.count === 0) {
-        console.log(
-          `Job ${job.id} failure rejected - worker no longer owns job ${WORKER_ID}`,
+        logger.warn(
+          {
+            event: "Job Failure Rejected",
+            jobId: job.id,
+            workerId: WORKER_ID,
+            fencingToken: job.fencingToken,
+          },
+          "Failure rejected - worker no longer owns job",
         );
         return;
       }
+      logger.error(
+        {
+          event: "Job Failed Permanently",
+          jobId: job.id,
+          workerId: WORKER_ID,
+          fencingToken: job.fencingToken,
+          attempt,
+          error: errorMessage,
+        },
+        "Unknown Error - Job Permanently Failed",
+      );
 
       return;
     }
-
-    console.log(
-      `[${new Date().toLocaleTimeString("en-IN", { timeZone: "Asia/Kolkata" })}] ` +
-        `Job ${job.id} failed on attempt ${attempt}`,
-    );
 
     if (attempt < job.maxAttempts) {
       const delay = calculateRetryDelay(attempt);
@@ -147,19 +249,34 @@ async function processJob(
       const availableAt = new Date(Date.now() + delay);
 
       const result = await retryJob(job.id, job.fencingToken, availableAt);
+
       if (result.count === 0) {
-        console.log(
-          `[${new Date().toLocaleTimeString("en-IN", { timeZone: "Asia/Kolkata" })}] ` +
-            `Job ${job.id} retry rejected - worker no longer owns job ${WORKER_ID}`,
+        logger.warn(
+          {
+            event: "Job Retry Rejected",
+            jobId: job.id,
+            workerId: WORKER_ID,
+            fencingToken: job.fencingToken,
+            attempt,
+          },
+          "Retry rejected - worker no longer owns job",
         );
         return;
       }
-      console.log(
-        `[${new Date().toLocaleTimeString("en-IN", { timeZone: "Asia/Kolkata" })}] ` +
-          `Job ${job.id} delayed for ${delay}ms`,
+      jobsRetried.inc();
+      logger.info(
+        {
+          event: "Job Retry Scheduled",
+          jobId: job.id,
+          workerId: WORKER_ID,
+          fencingToken: job.fencingToken,
+          attempt,
+          delay,
+          availableAt,
+        },
+        "Job retry scheduled",
       );
     } else {
-      const errorMessage = error instanceof Error ? error.message : "Unknown Error";
       const result = await deadLetterJob(
         job.id,
         job.fencingToken,
@@ -167,24 +284,49 @@ async function processJob(
       );
 
       if (result.count === 0) {
-        console.log(
-          `[${new Date().toLocaleTimeString("en-IN", { timeZone: "Asia/Kolkata" })}] ` +
-            `Job ${job.id} could not moved to DLQ -  worker no longer owns job ${WORKER_ID}`,
+        logger.warn(
+          {
+            event: "Job Dead Rejected",
+            jobId: job.id,
+            workerId: WORKER_ID,
+            fencingToken: job.fencingToken,
+            attempt,
+          },
+          "Job could not be moved to DLQ - worker no longer owns job",
         );
         return;
       }
-      console.log(
-        `[${new Date().toLocaleTimeString("en-IN", { timeZone: "Asia/Kolkata" })}] ` +
-          `Job ${job.id} move to DEAD letter ${attempt} attempts`,
+      jobsDead.inc();
+      logger.info(
+        {
+          event: "Job Dead ",
+          jobId: job.id,
+          workerId: WORKER_ID,
+          fencingToken: job.fencingToken,
+          attempt,
+          error: errorMessage,
+        },
+        "Job moved to DEAD",
       );
     }
   } finally {
+    jobDuration.observe(
+       (Date.now() - startedAt) / 1000,
+     );
+
     stopHeartbeat();
+
     activeJobs--;
-    console.log(
-      `[${new Date().toLocaleTimeString("en-IN", { timeZone: "Asia/Kolkata" })}] ` +
-        `Worker freed | Active Jobs: ${activeJobs}`,
-    );
+
+    logger.info(
+      {
+        event: "Worker Job Freed",
+        jobId: job.id,
+        workerId: WORKER_ID,
+        activeJobs: activeJobs,
+      },
+      "Worker freed",
+    )
   }
 }
 
@@ -195,50 +337,103 @@ async function workerLoop() {
       continue;
     }
     const job = await claimNextJob();
+
     if (!job) {
       await sleep(100);
       continue;
     }
+
     const jobPromise = processJob(job);
+
     runningJobs.add(jobPromise);
+
     jobPromise
       .catch((error) => {
-        console.error(
-          `Unexpected error while processing Job ${job.id}:`,
-          error,
+        logger.error(
+          {
+            event: "Worker Unexpected Error",
+            jobId: job.id,
+            workerId: WORKER_ID,
+            error: error instanceof Error ? error.message : String(error),
+          },
+          "Unexpected error while processing job",
         );
       })
       .finally(() => {
         runningJobs.delete(jobPromise);
       });
   }
-  console.log("Worker stopped accepting new jobs");
+  logger.info(
+    {
+      event: "Worker Stopped accepting new jobs",
+      workerId: WORKER_ID,
+    },
+    "Worker stopped accepting new jobs",
+  )
 }
 
 async function shutdown(signal: string) {
   if (isShuttingDown) return;
   isShuttingDown = true;
 
-  console.log(
-    `[${new Date().toLocaleTimeString("en-IN", { timeZone: "Asia/Kolkata" })}] Received ${signal}. Starting graceful shutdown...`,
-  );
+  logger.info(
+    {
+      event: "Worker Shutdown startd",
+      workerId: WORKER_ID,
+      signal,
+      activeJobs,
+    },
+    "Worker shutdown",
+  )
 
   if (!stopRecovery) {
     stopRecovery();
     stopRecovery = null;
   }
 
-  console.log(`worker stopped accepting new jobs`);
+  logger.info(
+    {
+      event: "Worker Stopped accepting new jobs",
+      workerId: WORKER_ID,
+      signal,
+      activeJobs,
+    },
+    "Worker stopped accepting new jobs",
+  )
 
-  console.log(`Waiting for ${runningJobs.size} active jobs to finish...`);
+  logger.info(
+    {
+      event: "Worker waiting for active jobs to finish",
+      workerId: WORKER_ID,
+      signal,
+      activeJobs: runningJobs.size,
+    },
+    "Worker waiting for active jobs to finish",
+  )
 
   await Promise.allSettled(Array.from(runningJobs));
 
-  console.log(`All active jobs have finished.`);
+  logger.info(
+    {
+      event: "Worker Job Finished",
+      workerId: WORKER_ID,
+      signal,
+      activeJobs: runningJobs.size,
+    },
+    "Worker job finished",
+  )
 
   await prisma.$disconnect();
 
-  console.log("Worker shutdown complete.");
+  logger.info(
+    {
+      event: "Worker Shutdown Complete",
+      workerId: WORKER_ID,
+      signal,
+      activeJobs: runningJobs.size,
+    },
+    "Worker shutdown complete",
+  );
 
   process.exit(0);
 }
@@ -251,15 +446,26 @@ export function startWorker() {
   process.on("SIGTERM", () => {
     shutdown("SIGTERM");
   });
+
   workerLoop().catch((error) => {
-    console.log("Worker Crashed:", error);
+    logger.error(
+      {
+        event: "Worker Crashed",
+        workerId: WORKER_ID,
+        error: error instanceof Error ? error.message : String(error),
+      },
+      "Worker crashed",
+    );
   });
 
   stopRecovery = startRecovery();
 
-  console.log(
-    `Node: ${new Date().toLocaleTimeString("en-IN", { timeZone: "Asia/Kolkata" })}`,
+  logger.info(
+    {
+      event: "Worker Started",
+      workerId: WORKER_ID,
+      concurrency: MAX_CONCURRENCY,
+    },
+    "Worker started",
   );
-
-  console.log(`worker started with concurrency ${MAX_CONCURRENCY}`);
 }

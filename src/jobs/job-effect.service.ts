@@ -1,3 +1,4 @@
+import { logger } from "../config/logger";
 import { Prisma } from "../generated/prisma/client";
 import { createJobEffect } from "./job-effect.repository"
 import { RetryableJobError, PermanentJobError } from "./job.errors";
@@ -25,12 +26,24 @@ export async function executeJobEffect(
       type,
     );
 
-  console.log(`[${new Date().toLocaleTimeString()}]` + ` Side Effect Executed | Job ${jobId}`);
+    logger.info(
+      {
+        jobId,
+        type,
+      },
+      "Side Effect Executed",
+    )
 
     return { executed: true };
   } catch (error) {
     if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002") {
-      console.log(`[${new Date().toLocaleTimeString()}]` + ` Side Effect already executed | Job ${jobId}`);
+      logger.info(
+        {
+          jobId,
+          type,
+        },
+        "Side Effect already executed",
+      )
 
       return { executed: false };
     }
