@@ -50,3 +50,28 @@ model JobEffect {
 
   @@index([jobId])
 }
+
+model JobAttempt {
+  id          String   @id @default(cuid())
+  jobId       String
+  jobType     String
+  workerId    String?
+
+  attempt      Int
+  fencingToken Int
+
+  status      String
+  error       String?
+
+  startedAt   DateTime @default(now()) @db.Timestamptz(3)
+  finishedAt  DateTime? @db.Timestamptz(3)
+  duration    Int?
+
+  createdAt   DateTime @default(now()) @db.Timestamptz(3)
+
+  @@index([jobId])
+  @@index([createdAt])
+  @@index([status])
+  @@index([jobType])
+  @@index([workerId])
+}

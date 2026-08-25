@@ -10,6 +10,7 @@ export async function recoverStaleJobs() {
         id: string;
         workerId: string | null;
         leaseUntil: Date | null;
+        type: string;
       }>
     >`
     SELECT "id", "workerId", "leaseUntil"
@@ -45,12 +46,25 @@ export async function recoverStaleJobs() {
 
         continue;
       }
+      const attemptResult = await tx.$executeRaw`
+        UPDATE "JobAttempt"
+        SET
+        "status" = 'RECOVERED',
+        "error" = 'worker lease expired and job was recovered',
+        "finishedAt" = NOW(),
+        "duration" = ROUND(
+          EXTRACT(EPOCH FROM NOW() - "startedAt") * 1000
+        )::int
+        WHERE "jobId" = ${job.id}
+         AND "status" = 'PROCESSING'
+      `;
       logger.warn(
         {
           event: "Job Recovery Success",
           jobId: job.id,
           previousWorkerId: job.workerId,
           leaseUntil: job.leaseUntil,
+          attemptMarkedRecovered: attemptResult,
         },
         `Stale Job Recovered`,
       );

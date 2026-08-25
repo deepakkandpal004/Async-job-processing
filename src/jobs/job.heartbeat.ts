@@ -1,13 +1,19 @@
 import { logger } from "../config/logger";
 import { prisma } from "../config/prisma";
 import { HEARTBEAT_INTERVAL } from "./job.constants";
+import { heartbeatFailures, heartbeatRenewals, ownershipLost } from "./worker.metrics";
 
 export function startHeartbeat(
   jobId: string,
+  jobType: string,
   fencingToken: number,
   workerId: string,
   onOwnershipLost: () => void,
 ) {
+  heartbeatRenewals.labels(jobType).inc(0);
+  heartbeatFailures.labels(jobType).inc(0);
+  ownershipLost.labels(jobType).inc(0);
+
   let stopped = false;
 
   const interval = setInterval(async () => {
@@ -25,6 +31,7 @@ export function startHeartbeat(
       `;
 
       if (result === 1) {
+        heartbeatRenewals.inc({ job_type: jobType });
         logger.info(
           {
             event: "Heartbeat Renewed",
@@ -35,6 +42,7 @@ export function startHeartbeat(
           "Heartbeat Renewed",
         );
       } else {
+        heartbeatFailures.inc({ job_type: jobType });
         logger.warn(
           {
             event: "heartbeat OwnerShip Lost",
@@ -49,6 +57,7 @@ export function startHeartbeat(
         onOwnershipLost();
       }
     } catch (error) {
+      heartbeatFailures.inc({ job_type: jobType });
       logger.error(
         {
           event: "Heartbeat Error",

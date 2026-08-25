@@ -17,15 +17,8 @@ import {
 } from "./job.repository";
 import { RetryableJobError, PermanentJobError } from "./job.errors";
 import { logger } from "../config/logger";
-import {
-  jobsProcessed,
-  jobsSuccessful,
-  jobsFailed,
-  jobsRetried,
-  jobsDead,
-  jobDuration,
-} from "./job.metrics";
-
+import { createJobAttempt, finishJobAttempt } from "./job.attempt.repository";
+import { activeJobsGauge } from "./job.metrics";
 
 let activeJobs = 0;
 let isShuttingDown = false;
@@ -61,14 +54,19 @@ async function processJob(
   job: NonNullable<Awaited<ReturnType<typeof claimNextJob>>>,
 ) {
   activeJobs++;
-
-  jobsProcessed.inc();
+  activeJobsGauge.set({ worker_id: WORKER_ID }, activeJobs);
 
   let ownershipLost = false;
-
   const attempt = job.attempts;
-
   const startedAt = new Date();
+
+  const jobAttempt = await createJobAttempt(
+    job.id,
+    job.type,
+    WORKER_ID,
+    job.fencingToken,
+    attempt,
+  );
 
   logger.info(
     {
@@ -84,13 +82,13 @@ async function processJob(
   );
 
   const stopHeartbeat = ENABLE_HEARTBEAT
-    ? startHeartbeat(job.id, job.fencingToken, WORKER_ID, () => {
+    ? startHeartbeat(job.id, job.type, job.fencingToken, WORKER_ID, () => {
         ownershipLost = true;
       })
     : () => {};
 
   try {
-    await sleep(10000);
+    await sleep(20000);
 
     if (ownershipLost) {
       logger.warn(
@@ -142,7 +140,8 @@ async function processJob(
       );
     }
 
-    jobsSuccessful.inc();
+    await finishJobAttempt(jobAttempt.id, "COMPLETED", startedAt);
+
     logger.info(
       {
         event: "Job Completed",
@@ -198,7 +197,8 @@ async function processJob(
         );
         return;
       }
-      jobsFailed.inc();
+      await finishJobAttempt(jobAttempt.id, "FAILED", startedAt, errorMessage);
+
       logger.error(
         {
           event: "Job Failed Permanently",
@@ -263,7 +263,7 @@ async function processJob(
         );
         return;
       }
-      jobsRetried.inc();
+      await finishJobAttempt(jobAttempt.id, "RETRIED", startedAt, errorMessage);
       logger.info(
         {
           event: "Job Retry Scheduled",
@@ -296,7 +296,7 @@ async function processJob(
         );
         return;
       }
-      jobsDead.inc();
+      await finishJobAttempt(jobAttempt.id, "DEAD", startedAt, errorMessage);
       logger.info(
         {
           event: "Job Dead ",
@@ -310,13 +310,10 @@ async function processJob(
       );
     }
   } finally {
-    jobDuration.observe(
-       (Date.now() - startedAt) / 1000,
-     );
-
     stopHeartbeat();
 
     activeJobs--;
+    activeJobsGauge.set({ worker_id: WORKER_ID }, activeJobs);
 
     logger.info(
       {
@@ -326,7 +323,7 @@ async function processJob(
         activeJobs: activeJobs,
       },
       "Worker freed",
-    )
+    );
   }
 }
 
@@ -369,7 +366,7 @@ async function workerLoop() {
       workerId: WORKER_ID,
     },
     "Worker stopped accepting new jobs",
-  )
+  );
 }
 
 async function shutdown(signal: string) {
@@ -384,7 +381,7 @@ async function shutdown(signal: string) {
       activeJobs,
     },
     "Worker shutdown",
-  )
+  );
 
   if (!stopRecovery) {
     stopRecovery();
@@ -399,7 +396,7 @@ async function shutdown(signal: string) {
       activeJobs,
     },
     "Worker stopped accepting new jobs",
-  )
+  );
 
   logger.info(
     {
@@ -409,7 +406,7 @@ async function shutdown(signal: string) {
       activeJobs: runningJobs.size,
     },
     "Worker waiting for active jobs to finish",
-  )
+  );
 
   await Promise.allSettled(Array.from(runningJobs));
 
@@ -421,7 +418,7 @@ async function shutdown(signal: string) {
       activeJobs: runningJobs.size,
     },
     "Worker job finished",
-  )
+  );
 
   await prisma.$disconnect();
 
