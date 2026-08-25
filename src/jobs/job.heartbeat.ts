@@ -10,9 +10,9 @@ export function startHeartbeat(
   workerId: string,
   onOwnershipLost: () => void,
 ) {
-  heartbeatRenewals.labels(jobType).inc(0);
-  heartbeatFailures.labels(jobType).inc(0);
-  ownershipLost.labels(jobType).inc(0);
+  heartbeatRenewals.labels(workerId, jobType).inc(0);
+  heartbeatFailures.labels(workerId, jobType).inc(0);
+  ownershipLost.labels(workerId, jobType).inc(0);
 
   let stopped = false;
 
@@ -31,7 +31,7 @@ export function startHeartbeat(
       `;
 
       if (result === 1) {
-        heartbeatRenewals.inc({ job_type: jobType });
+        heartbeatRenewals.inc({ job_type: jobType, worker_id: workerId });
         logger.info(
           {
             event: "Heartbeat Renewed",
@@ -42,7 +42,8 @@ export function startHeartbeat(
           "Heartbeat Renewed",
         );
       } else {
-        heartbeatFailures.inc({ job_type: jobType });
+        heartbeatFailures.inc({ job_type: jobType, worker_id: workerId });
+        ownershipLost.inc({ job_type: jobType, worker_id: workerId });
         logger.warn(
           {
             event: "heartbeat OwnerShip Lost",
@@ -57,7 +58,7 @@ export function startHeartbeat(
         onOwnershipLost();
       }
     } catch (error) {
-      heartbeatFailures.inc({ job_type: jobType });
+      heartbeatFailures.inc({ job_type: jobType, worker_id: workerId });
       logger.error(
         {
           event: "Heartbeat Error",

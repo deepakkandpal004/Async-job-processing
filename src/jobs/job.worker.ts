@@ -383,7 +383,7 @@ async function shutdown(signal: string) {
     "Worker shutdown",
   );
 
-  if (!stopRecovery) {
+  if (stopRecovery) {
     stopRecovery();
     stopRecovery = null;
   }
