@@ -22,6 +22,7 @@ model Job {
   payload     Json
 
   idempotentKey String @unique
+  priority      Int    @default(0)
   status      JobStatus @default(QUEUED)
 
   attempts    Int      @default(0)
@@ -38,7 +39,7 @@ model Job {
   createdAt   DateTime @default(now()) @db.Timestamptz(3)
   updatedAt   DateTime @updatedAt @db.Timestamptz(3)
 
-  @@index([status, availableAt])
+  @@index([status, priority, availableAt])
   @@index([status, leaseUntil])
 }
 
