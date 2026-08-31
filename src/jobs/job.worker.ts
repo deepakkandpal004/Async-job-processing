@@ -77,6 +77,7 @@ async function processJob(
       leaseUntil: job.leaseUntil,
       fencingToken: job.fencingToken,
       activeJobs: activeJobs,
+      priority: job.priority,
     },
     "Processing Job",
   );

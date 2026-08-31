@@ -5,6 +5,8 @@ export async function createJob(
   type: string,
   payload: any,
   idempotentKey: string,
+  priority: number = 0,
+  availableAt: Date = new Date(),
 ) {
   const existing = await prisma.job.findUnique({
     where: { idempotentKey },
@@ -19,6 +21,8 @@ export async function createJob(
         type,
         payload,
         idempotentKey,
+        priority,
+        availableAt,
       },
     });
   } catch (error: unknown) {
@@ -45,7 +49,7 @@ export async function claimNextJob() {
       FROM "Job"
       WHERE "status" = 'QUEUED'
         AND "availableAt" <= NOW()
-      ORDER BY "createdAt" ASC
+      ORDER BY "priority" DESC, "createdAt" ASC
       FOR UPDATE SKIP LOCKED
       LIMIT 1
     `;
@@ -171,4 +175,16 @@ export async function retryDeadJob(jobId: string) {
       leaseUntil: null
     }
   })
+}
+
+export async function cancelJob(jobId: string) {
+  return await prisma.job.updateMany({
+    where: {
+      id: jobId,
+      status: "QUEUED",
+    },
+    data: {
+      status: "CANCELLED",
+    },
+  });
 }

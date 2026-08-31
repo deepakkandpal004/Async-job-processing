@@ -13,6 +13,7 @@ enum JobStatus {
   COMPLETED
   FAILED
   DEAD
+  CANCELLED
 }
 
 model Job {
