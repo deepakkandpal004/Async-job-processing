@@ -19,6 +19,16 @@ export async function executeJobEffect(
       "Simulated permanent failure",
     );
   }
+
+  if (
+    type === "DLQ_RECOVERY_TEST" &&
+    process.env.DLQ_TEST_FAIL === "true"
+  ) {
+    console.log("🔥 FORCING DLQ TEST FAILURE");
+      throw new RetryableJobError(
+        "Simulated temporary failure",
+      );
+    }
   try {
     await createJobEffect(
       idempotentKey,
