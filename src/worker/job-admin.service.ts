@@ -1,4 +1,5 @@
 import { prisma } from "../config/prisma";
+import { JobStatus } from "../generated/prisma/enums";
 import { retryDeadJob } from "../jobs/job.repository";
 
 export async function retryDeadJobManually(jobId: string) {
@@ -40,4 +41,57 @@ export async function getJobById(jobId: string) {
       id: jobId,
     },
   });
+}
+
+interface GetJobsInput {
+  page: number;
+  limit: number;
+  status?: JobStatus;
+  type?: string;
+  priority?: number;
+}
+
+export async function getJobs({ page, limit, status, type, priority }: GetJobsInput) {
+  const skip = (page - 1) * limit;
+
+  const where = {
+    ...(status !== undefined && { status }),
+    ...(type !== undefined && { type }),
+    ...(priority !== undefined && { priority }),
+  }
+
+  const [jobs, total] = await prisma.$transaction([
+    prisma.job.findMany({
+      where,
+      skip,
+      take: limit,
+      orderBy: {
+        createdAt: "desc",
+      },
+      select: {
+        id: true,
+        payload: true,
+        type: true,
+        priority: true,
+        status: true,
+        maxAttempts: true,
+        createdAt: true,
+        updatedAt: true,
+        attempts: true,
+        deadAt: true,
+        lastError: true,
+      },
+    }),
+    prisma.job.count({ where }),
+  ]);
+
+  return {
+    jobs,
+    pagination: {
+      page,
+      limit,
+      total,
+      totalPages: Math.ceil(total / limit),
+    },
+  };
 }
