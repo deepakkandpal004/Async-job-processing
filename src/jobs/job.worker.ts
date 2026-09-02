@@ -18,7 +18,7 @@ import {
 import { RetryableJobError, PermanentJobError } from "./job.errors";
 import { logger } from "../config/logger";
 import { createJobAttempt, finishJobAttempt } from "./job.attempt.repository";
-import { activeJobsGauge } from "./job.metrics";
+import { activeJobsGauge } from "./worker.metrics";
 
 let activeJobs = 0;
 let isShuttingDown = false;

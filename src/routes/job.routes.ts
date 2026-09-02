@@ -1,10 +1,10 @@
 import { Router } from "express";
 import { cancelJob, createJob } from "../jobs/job.service";
-import { jobsSuccessful } from "../jobs/job.metrics";
+import { rateLimit } from "../middleware/rate-limit";
 
 const router = Router();
 
-router.post("/", async (req, res) => {
+router.post("/", rateLimit, async (req, res) => {
   try {
     const { type, payload, idempotentKey, priority = 0, delay = 0 } = req.body;
 
@@ -32,7 +32,7 @@ router.post("/", async (req, res) => {
       });
     }
 
-    if (delay < 0) {
+    if (!Number.isInteger(delay) ||delay < 0) {
       return res.status(400).json({
         message: "delay cannot be negative",
       });
@@ -60,7 +60,7 @@ router.post("/", async (req, res) => {
       },
     });
   } catch (error) {
-    console.log(error.message);
+    console.error("Failed to create job", error);
     return res.status(500).json({
       message: "Internal server error",
     });
