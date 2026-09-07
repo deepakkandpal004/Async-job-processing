@@ -1,8 +1,10 @@
 import { Router } from 'express';
 import { getDeadJobs, getJobById, getJobs, retryDeadJobManually } from '../worker/job-admin.service';
 import { JobStatus } from '../generated/prisma/enums';
+import { adminAuth } from '../middleware/admin-auth';
 
 const router = Router();
+router.use(adminAuth);
 
 router.get("/", async (req, res) => {
   try {

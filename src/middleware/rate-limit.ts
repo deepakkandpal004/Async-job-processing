@@ -2,7 +2,7 @@ import { NextFunction, Request, Response } from "express";
 
 const WINDOW_MS = 60 * 1000;
 
-const MAX_REQUESTS = 10000;
+const MAX_REQUESTS = 1000;
 
 const clients = new Map<string, { count: number; resetAt: number }>();
 
