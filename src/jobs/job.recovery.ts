@@ -10,7 +10,6 @@ export async function recoverStaleJobs() {
         id: string;
         workerId: string | null;
         leaseUntil: Date | null;
-        type: string;
       }>
     >`
     SELECT "id", "workerId", "leaseUntil"

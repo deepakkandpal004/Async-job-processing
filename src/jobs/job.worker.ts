@@ -50,6 +50,17 @@ function sleep(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+function recordProcessingDuration(jobType: string, startedAt: Date) {
+  const processingDurationSeconds =
+    (Date.now() - startedAt.getTime()) / 1000;
+
+  jobProcessingDuration.observe(
+    { job_type: jobType },
+    processingDurationSeconds,
+  );
+}
+
+
 async function processJob(
   job: NonNullable<Awaited<ReturnType<typeof claimNextJob>>>,
 ) {
@@ -82,7 +93,11 @@ async function processJob(
     "Processing Job",
   );
 
-  const stopHeartbeat = ENABLE_HEARTBEAT
+  const disableHeartbeatForTest =
+    job.type === "FENCING_TEST" &&
+    process.env.FENCING_TEST === "true";
+
+  const stopHeartbeat = ENABLE_HEARTBEAT && !disableHeartbeatForTest
     ? startHeartbeat(job.id, job.type, job.fencingToken, WORKER_ID, () => {
         ownershipLost = true;
       })
@@ -143,12 +158,7 @@ async function processJob(
 
     await finishJobAttempt(jobAttempt.id, "COMPLETED", startedAt);
 
-    const processingDurationSeconds = (Date.now() - startedAt.getTime()) / 1000;
-
-    jobProcessingDuration.observe(
-      { job_type: job.type },
-      processingDurationSeconds,
-    );
+    recordProcessingDuration(job.type, startedAt);
 
     logger.info(
       {
@@ -206,6 +216,8 @@ async function processJob(
         return;
       }
       await finishJobAttempt(jobAttempt.id, "FAILED", startedAt, errorMessage);
+
+      recordProcessingDuration(job.type, startedAt)
 
       logger.error(
         {
@@ -272,6 +284,7 @@ async function processJob(
         return;
       }
       await finishJobAttempt(jobAttempt.id, "RETRIED", startedAt, errorMessage);
+      recordProcessingDuration(job.type, startedAt);
       logger.info(
         {
           event: "Job Retry Scheduled",
@@ -305,6 +318,7 @@ async function processJob(
         return;
       }
       await finishJobAttempt(jobAttempt.id, "DEAD", startedAt, errorMessage);
+      recordProcessingDuration(job.type, startedAt);
       logger.info(
         {
           event: "Job Dead ",
