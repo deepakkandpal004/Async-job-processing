@@ -31,6 +31,22 @@ activeJobsGauge.set(
   0,
 );
 
+export const jobProcessingDuration = new client.Histogram({
+  name: "job_processing_duration_seconds",
+  help: "Time spent processing individual job attempts in seconds",
+  labelNames: ["job_type"],
+  buckets: [0.1, 0.5, 1, 5, 10, 20, 30, 60],
+  registers: [workerRegistry],
+});
+
+export const jobQueueWaitDuration = new client.Histogram({
+  name: "job_queue_wait_duration_seconds",
+  help: "Time jobs spend waiting in the queue before being claimed by a worker",
+  labelNames: ["job_type"],
+  buckets: [0.1, 0.5, 1, 5, 10, 20, 30, 60],
+  registers: [workerRegistry],
+});
+
 export const heartbeatRenewals = new client.Counter({
   name: "job_heartbeat_renewals_total",
   help: "Total number of successful heartbeat lease renewals",

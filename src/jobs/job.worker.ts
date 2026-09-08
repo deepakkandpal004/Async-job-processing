@@ -18,7 +18,7 @@ import {
 import { RetryableJobError, PermanentJobError } from "./job.errors";
 import { logger } from "../config/logger";
 import { createJobAttempt, finishJobAttempt } from "./job.attempt.repository";
-import { activeJobsGauge } from "./worker.metrics";
+import { activeJobsGauge, jobProcessingDuration, jobQueueWaitDuration } from "./worker.metrics";
 
 let activeJobs = 0;
 let isShuttingDown = false;
@@ -142,6 +142,13 @@ async function processJob(
     }
 
     await finishJobAttempt(jobAttempt.id, "COMPLETED", startedAt);
+
+    const processingDurationSeconds = (Date.now() - startedAt.getTime()) / 1000;
+
+    jobProcessingDuration.observe(
+      { job_type: job.type },
+      processingDurationSeconds,
+    );
 
     logger.info(
       {
@@ -340,6 +347,10 @@ async function workerLoop() {
       await sleep(100);
       continue;
     }
+    const claimedAt = Date.now();
+
+    const queueWaitDurationSeconds = (claimedAt - job.availableAt.getTime()) / 1000;
+    jobQueueWaitDuration.observe({ job_type: job.type }, queueWaitDurationSeconds);
 
     const jobPromise = processJob(job);
 

@@ -60,7 +60,7 @@ router.post("/", rateLimit, async (req, res) => {
       },
     });
   } catch (error) {
-    console.error("Failed to create job", error);
+    console.log("Failed to create job", error);
     return res.status(500).json({
       message: "Internal server error",
     });
@@ -84,7 +84,7 @@ router.delete("/:jobId", async (req, res) => {
       message: "Job cancelled successfully",
     });
   } catch (error) {
-    console.log(error.message);
+    console.error("Failed to cancel job", error);
     return res.status(500).json({
       message: "Internal server error",
     });
