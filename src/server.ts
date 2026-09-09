@@ -1,13 +1,17 @@
 import app from "./app";
+import { connectRedis } from "./config/redis";
+import { config } from "./config/env";
 
-console.log("1. app imported");
+const PORT = config.api.port;
 
-const PORT = 3000;
+const startServer = async () => {
+  await connectRedis();
+  app.listen(PORT, () => {
+    console.log(`server is running at PORT ${PORT}`);
+  });
+}
 
-console.log("2. starting server");
-
-app.listen(PORT, () => {
-  console.log(`server is running at PORT ${PORT}`);
-});
-
-console.log("3. listen called");
+startServer().catch((error) => {
+  console.error("failed to start server", error);
+  process.exit(1);
+})

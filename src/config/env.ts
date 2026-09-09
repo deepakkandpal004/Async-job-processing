@@ -19,6 +19,13 @@ export const config = {
     nodeEnv: process.env.NODE_ENV ?? "development",
     logLevel: process.env.LOG_LEVEL ?? "info",
   },
+  api: {
+    port: getPositiveInt("PORT", 3000),
+  },
+
+  redis: {
+    url: process.env.REDIS_URL ?? "redis://localhost:6379",
+  },
 
   worker: {
     concurrency: getPositiveInt("MAX_CONCURRENCY", 3),
