@@ -1,17 +1,17 @@
-export const MAX_CONCURRENCY = 3;
+import { config } from "../config/env";
 
-export const MAX_ATTEMPTS = 3;
+export const MAX_CONCURRENCY = config.worker.concurrency;
 
-export const BASE_RETRY_DELAY = 1000;
+export const MAX_ATTEMPTS = config.worker.maxAttempts;
 
-export const LEASE_DURATION = 10_000;
+export const BASE_RETRY_DELAY = config.worker.baseRetryDelay;
 
-export const HEARTBEAT_INTERVAL = 5000;
+export const LEASE_DURATION = config.worker.leaseDuration;
 
-export const MAX_RETRY_DELAY = 60 *1000;
+export const HEARTBEAT_INTERVAL = config.worker.heartbeatInterval;
+
+export const MAX_RETRY_DELAY = config.worker.maxRetryDelay;
 
 export const WORKER_ID = `worker-${process.pid}`;
 
-export const WORKER_METRICS_PORT = Number(
-  process.env.WORKER_METRICS_PORT ?? 3001,
-);
+export const WORKER_METRICS_PORT = config.worker.metricsPort;

@@ -1,24 +1,11 @@
 import client from "prom-client";
 import { prisma } from "../config/prisma";
-import { MAX_CONCURRENCY, WORKER_ID } from "./job.constants";
 
 const register = new client.Registry();
 
 client.collectDefaultMetrics({
   register,
 });
-
-export const workerMaxConcurrency = new client.Gauge({
-  name: "worker_max_concurrency",
-  help: "Maximum number of concurrent jobs a worker can process",
-  labelNames: ["worker_id"],
-  registers: [register],
-});
-
-workerMaxConcurrency.set(
-  { worker_id: WORKER_ID },
-  MAX_CONCURRENCY,
-);
 
 export const jobsProcessed = new client.Gauge({
   name: "jobs_processed_total",
@@ -59,13 +46,6 @@ export const jobsRecovered = new client.Gauge({
   name: "jobs_recovered_total",
   help: "Total number of stale jobs recovered by workers",
   labelNames: ["job_type"],
-  registers: [register],
-});
-
-export const activeJobsGauge = new client.Gauge({
-  name: "active_jobs",
-  help: "Number of jobs currently being processed by workers",
-  labelNames: ["worker_id"],
   registers: [register],
 });
 

@@ -11,8 +11,6 @@ app.use("/admin/jobs", jobAdminRoutes);
 
 app.get("/metrics", async (req, res) => {
   try {
-    await updateSystemMetrics();
-
     res.set("Content-Type", getMetricsContentType());
 
     res.end(await getMetrics());
