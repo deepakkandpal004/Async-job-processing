@@ -15,10 +15,14 @@ import {
   retryJob,
   deadLetterJob,
 } from "./job.repository";
-import { RetryableJobError, PermanentJobError } from "./job.errors";
+import { classifyJobError } from "./job.errors";
 import { logger } from "../config/logger";
 import { createJobAttempt, finishJobAttempt } from "./job.attempt.repository";
-import { activeJobsGauge, jobProcessingDuration, jobQueueWaitDuration } from "./worker.metrics";
+import {
+  activeJobsGauge,
+  jobProcessingDuration,
+  jobQueueWaitDuration,
+} from "./worker.metrics";
 
 let activeJobs = 0;
 let isShuttingDown = false;
@@ -38,28 +42,18 @@ function calculateRetryDelay(attempt: number): number {
   return Math.floor(Math.min(cappedDelay + jitter, MAX_RETRY_DELAY));
 }
 
-function isRetryableError(error: unknown): boolean {
-  return error instanceof RetryableJobError;
-}
-
-function isPermanentError(error: unknown): boolean {
-  return error instanceof PermanentJobError;
-}
-
 function sleep(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 function recordProcessingDuration(jobType: string, startedAt: Date) {
-  const processingDurationSeconds =
-    (Date.now() - startedAt.getTime()) / 1000;
+  const processingDurationSeconds = (Date.now() - startedAt.getTime()) / 1000;
 
   jobProcessingDuration.observe(
     { job_type: jobType },
     processingDurationSeconds,
   );
 }
-
 
 async function processJob(
   job: NonNullable<Awaited<ReturnType<typeof claimNextJob>>>,
@@ -94,14 +88,14 @@ async function processJob(
   );
 
   const disableHeartbeatForTest =
-    job.type === "FENCING_TEST" &&
-    process.env.FENCING_TEST === "true";
+    job.type === "FENCING_TEST" && process.env.FENCING_TEST === "true";
 
-  const stopHeartbeat = ENABLE_HEARTBEAT && !disableHeartbeatForTest
-    ? startHeartbeat(job.id, job.type, job.fencingToken, WORKER_ID, () => {
-        ownershipLost = true;
-      })
-    : () => {};
+  const stopHeartbeat =
+    ENABLE_HEARTBEAT && !disableHeartbeatForTest
+      ? startHeartbeat(job.id, job.type, job.fencingToken, WORKER_ID, () => {
+          ownershipLost = true;
+        })
+      : () => {};
 
   try {
     await sleep(20000);
@@ -187,6 +181,7 @@ async function processJob(
 
     const errorMessage =
       error instanceof Error ? error.message : "Unknown Error";
+    const errorType = classifyJobError(error);
 
     logger.error(
       {
@@ -200,7 +195,7 @@ async function processJob(
       "Job Processing Failed",
     );
 
-    if (isPermanentError(error)) {
+    if (errorType === "PERMANENT") {
       const result = await failJob(job.id, job.fencingToken);
 
       if (result.count === 0) {
@@ -217,7 +212,7 @@ async function processJob(
       }
       await finishJobAttempt(jobAttempt.id, "FAILED", startedAt, errorMessage);
 
-      recordProcessingDuration(job.type, startedAt)
+      recordProcessingDuration(job.type, startedAt);
 
       logger.error(
         {
@@ -233,7 +228,7 @@ async function processJob(
       return;
     }
 
-    if (!isRetryableError(error)) {
+    if (errorType === "UNKNOWN") {
       const result = await failJob(job.id, job.fencingToken);
 
       if (result.count === 0) {
@@ -248,6 +243,8 @@ async function processJob(
         );
         return;
       }
+      await finishJobAttempt(jobAttempt.id, "FAILED", startedAt, errorMessage);
+      recordProcessingDuration(job.type, startedAt);
       logger.error(
         {
           event: "Job Failed Permanently",
@@ -363,8 +360,12 @@ async function workerLoop() {
     }
     const claimedAt = Date.now();
 
-    const queueWaitDurationSeconds = (claimedAt - job.availableAt.getTime()) / 1000;
-    jobQueueWaitDuration.observe({ job_type: job.type }, queueWaitDurationSeconds);
+    const queueWaitDurationSeconds =
+      (claimedAt - job.availableAt.getTime()) / 1000;
+    jobQueueWaitDuration.observe(
+      { job_type: job.type },
+      queueWaitDurationSeconds,
+    );
 
     const jobPromise = processJob(job);
 
