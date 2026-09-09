@@ -1,5 +1,4 @@
-import "dotenv/config";
-import { heartbeatFailures } from "../jobs/worker.metrics";
+import "dotenv/config"
 
 const getPositiveInt = (name: string, defaultValue: number): number => {
   const value = process.env[name];
@@ -22,7 +21,7 @@ export const config = {
   },
 
   worker: {
-    concurrency: getPositiveInt("WORKER_CONCURRENCY", 3),
+    concurrency: getPositiveInt("MAX_CONCURRENCY", 3),
 
     maxAttempts: getPositiveInt("MAX_ATTEMPTS", 3),
 
@@ -34,6 +33,6 @@ export const config = {
 
     heartbeatInterval: getPositiveInt("HEARTBEAT_INTERVAL", 5000),
 
-    metricsPort: getPositiveInt("METRICS_PORT", 3001),
+    metricsPort: getPositiveInt("WORKER_METRICS_PORT", 3001),
   },
 };
