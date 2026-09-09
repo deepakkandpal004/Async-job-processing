@@ -14,6 +14,7 @@ export const rateLimit = async (req: Request, res: Response, next: NextFunction)
     if (count === 1) {
       await redis.expire(key, WINDOW_SECONDS);
     }
+
     if (count > MAX_REQUESTS) {
       return res.status(429).json({
         success: false,
