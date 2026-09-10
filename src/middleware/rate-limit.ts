@@ -1,8 +1,8 @@
 import { NextFunction, Request, Response } from "express";
 import { redis } from "../config/redis";
 
-const WINDOW_SECONDS = 60;
-const MAX_REQUESTS = 1000;
+const WINDOW_SECONDS = 60; // 1 minute
+const MAX_REQUESTS = 1000; // 1000 requests per window
 
 export const rateLimit = async (req: Request, res: Response, next: NextFunction) => {
   const clientId = req.ip ?? "unknown";
@@ -13,6 +13,11 @@ export const rateLimit = async (req: Request, res: Response, next: NextFunction)
 
     if (count === 1) {
       await redis.expire(key, WINDOW_SECONDS);
+    } else {
+      const ttl = await redis.ttl(key);
+      if (ttl === -1) {
+        await redis.expire(key, WINDOW_SECONDS);
+      }
     }
 
     if (count > MAX_REQUESTS) {
@@ -25,9 +30,6 @@ export const rateLimit = async (req: Request, res: Response, next: NextFunction)
   } catch (error) {
     console.error("Rate limiter redis error", error);
 
-    return res.status(500).json({
-      success: false,
-      message: "Rate limiter unavailable",
-    });
+    return next();
   }
 };
