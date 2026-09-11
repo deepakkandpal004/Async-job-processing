@@ -29,6 +29,8 @@ model Job {
   attempts    Int      @default(0)
   maxAttempts Int      @default(3)
 
+  timeoutMs   Int?
+
   lastError   String?
   deadAt      DateTime? @db.Timestamptz(3)
 

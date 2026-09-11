@@ -41,5 +41,7 @@ export const config = {
     heartbeatInterval: getPositiveInt("HEARTBEAT_INTERVAL", 5000),
 
     metricsPort: getPositiveInt("WORKER_METRICS_PORT", 3001),
+
+    timeoutMs: getPositiveInt("JOB_TIMEOUT_MS", 30_000),
   },
 };

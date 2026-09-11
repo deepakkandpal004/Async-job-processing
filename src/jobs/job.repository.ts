@@ -7,6 +7,7 @@ export async function createJob(
   idempotentKey: string,
   priority: number = 0,
   availableAt: Date = new Date(),
+  timeoutMs?: number,
 ) {
   const existing = await prisma.job.findUnique({
     where: { idempotentKey },
@@ -23,6 +24,7 @@ export async function createJob(
         idempotentKey,
         priority,
         availableAt,
+        timeoutMs,
       },
     });
   } catch (error: unknown) {

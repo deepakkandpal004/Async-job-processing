@@ -6,7 +6,7 @@ const router = Router();
 
 router.post("/", rateLimit, async (req, res) => {
   try {
-    const { type, payload, idempotentKey, priority = 0, delay = 0 } = req.body;
+    const { type, payload, idempotentKey, priority = 0, delay = 0,  } = req.body;
 
     if (!type) {
       return res.status(400).json({
@@ -46,6 +46,7 @@ router.post("/", rateLimit, async (req, res) => {
       idempotentKey,
       priority,
       availableAt,
+      timeoutMs: req.body.timeoutMs,
     });
 
     return res.status(202).json({
@@ -57,6 +58,7 @@ router.post("/", rateLimit, async (req, res) => {
         idempotentKey: job.idempotentKey,
         priority: job.priority,
         availableAt: job.availableAt,
+        timeoutMs: job.timeoutMs,
       },
     });
   } catch (error) {

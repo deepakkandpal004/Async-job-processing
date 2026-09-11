@@ -15,3 +15,5 @@ export const MAX_RETRY_DELAY = config.worker.maxRetryDelay;
 export const WORKER_ID = `worker-${process.pid}`;
 
 export const WORKER_METRICS_PORT = config.worker.metricsPort;
+
+export const JOB_TIMEOUT_MS = config.worker.timeoutMs;

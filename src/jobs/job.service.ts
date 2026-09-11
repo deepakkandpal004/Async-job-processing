@@ -6,6 +6,7 @@ interface createJobInput {
   idempotentKey: string,
   priority?: number,
   availableAt?: Date,
+  timeoutMs?: number,
 }
 
 export async function createJob(input: createJobInput) {
@@ -15,6 +16,7 @@ export async function createJob(input: createJobInput) {
     input.idempotentKey,
     input.priority ?? 0,
     input.availableAt ?? new Date(),
+    input.timeoutMs,
   );
 }
 
