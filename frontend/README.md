@@ -1,6 +1,6 @@
-# Async Job Processing — Test Console (frontend)
+# QueueForge — Test Console (frontend)
 
-A tiny React dashboard for testing the `async-job-processing` backend.
+A tiny React dashboard for testing the QueueForge backend.
 **It only calls the backend's HTTP API — no backend code was changed.**
 
 ## Run

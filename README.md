@@ -1,6 +1,8 @@
-# Async Job Processing — Test Console (frontend)
+# QueueForge — Distributed Task Scheduler
 
-A tiny React dashboard for testing the `async-job-processing` backend.
+A distributed task scheduler for background jobs — priority queue with retries, dead-letter handling, idempotent enqueue, and worker leases with heartbeats and fencing tokens. Includes a React test console (dashboard) for trying it out.
+
+A tiny React dashboard for testing the QueueForge backend.
 **It only calls the backend's HTTP API — no backend code was changed.**
 
 ## Run
